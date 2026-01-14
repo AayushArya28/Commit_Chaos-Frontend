@@ -53,6 +53,9 @@ const Profile = () => {
     photoURL: '',
   });
 
+  // Emergency contacts state (1-3 contacts)
+  const [emergencyContacts, setEmergencyContacts] = useState([{ name: '', phone: '' }]);
+
   // UI state
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,6 +71,10 @@ const Profile = () => {
         phone: userProfile.phone || '',
         photoURL: userProfile.photoURL || user.photoURL || '',
       });
+      // Load emergency contacts
+      if (userProfile.emergencyContacts && userProfile.emergencyContacts.length > 0) {
+        setEmergencyContacts(userProfile.emergencyContacts);
+      }
     } else if (user) {
       setFormData({
         displayName: user.displayName || '',
@@ -144,6 +151,27 @@ const Profile = () => {
     }
   };
 
+  // Handle emergency contact change
+  const handleContactChange = (index, field, value) => {
+    const updated = [...emergencyContacts];
+    updated[index][field] = value;
+    setEmergencyContacts(updated);
+  };
+
+  // Add new emergency contact (max 3)
+  const addEmergencyContact = () => {
+    if (emergencyContacts.length < 3) {
+      setEmergencyContacts([...emergencyContacts, { name: '', phone: '' }]);
+    }
+  };
+
+  // Remove emergency contact (min 1)
+  const removeEmergencyContact = (index) => {
+    if (emergencyContacts.length > 1) {
+      setEmergencyContacts(emergencyContacts.filter((_, i) => i !== index));
+    }
+  };
+
   // Handle form submit
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -151,9 +179,18 @@ const Profile = () => {
     setLoading(true);
     setMessage({ type: '', text: '' });
 
+    // Validate emergency contacts - at least 1 valid contact required
+    const validContacts = emergencyContacts.filter(c => c.name.trim() && c.phone.trim());
+    if (validContacts.length === 0) {
+      setMessage({ type: 'error', text: 'Please add at least one emergency contact with name and phone number.' });
+      setLoading(false);
+      return;
+    }
+
     const result = await updateUserProfile({
       displayName: formData.displayName,
       phone: formData.phone,
+      emergencyContacts: validContacts,
     });
 
     if (result.success) {
@@ -315,6 +352,68 @@ const Profile = () => {
               }
             />
 
+            {/* Emergency Contacts Section */}
+            <div className="bg-global-bg rounded-lg p-4 border border-gray-100">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-sm font-medium text-global-text">Emergency Contacts</p>
+                  <p className="text-xs text-global-muted">Add 1-3 contacts for SOS alerts</p>
+                </div>
+                {isEditing && emergencyContacts.length < 3 && (
+                  <button
+                    type="button"
+                    onClick={addEmergencyContact}
+                    className="text-global-indigo text-sm font-medium hover:underline flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add Contact
+                  </button>
+                )}
+              </div>
+              
+              <div className="space-y-3">
+                {emergencyContacts.map((contact, index) => (
+                  <div key={index} className="flex gap-2 items-start">
+                    <div className="flex-1 grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Contact Name"
+                        value={contact.name}
+                        onChange={(e) => handleContactChange(index, 'name', e.target.value)}
+                        disabled={!isEditing}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-global-indigo/20 bg-white text-global-text text-sm disabled:bg-gray-50 disabled:text-global-muted"
+                      />
+                      <input
+                        type="tel"
+                        placeholder="Phone Number"
+                        value={contact.phone}
+                        onChange={(e) => handleContactChange(index, 'phone', e.target.value)}
+                        disabled={!isEditing}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-global-indigo/20 bg-white text-global-text text-sm disabled:bg-gray-50 disabled:text-global-muted"
+                      />
+                    </div>
+                    {isEditing && emergencyContacts.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeEmergencyContact(index)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {!isEditing && emergencyContacts.filter(c => c.name && c.phone).length === 0 && (
+                <p className="text-xs text-red-500 mt-2">⚠️ No emergency contacts added. Please edit your profile to add at least one.</p>
+              )}
+            </div>
+
             {/* KYC Status */}
             <div className="bg-global-bg rounded-lg p-4 border border-gray-100">
               <div className="flex items-center justify-between">
@@ -345,6 +444,12 @@ const Profile = () => {
                           phone: userProfile.phone || '',
                           photoURL: userProfile.photoURL || user?.photoURL || '',
                         });
+                        // Reset emergency contacts
+                        if (userProfile.emergencyContacts && userProfile.emergencyContacts.length > 0) {
+                          setEmergencyContacts(userProfile.emergencyContacts);
+                        } else {
+                          setEmergencyContacts([{ name: '', phone: '' }]);
+                        }
                       }
                     }}
                     className="flex-1"

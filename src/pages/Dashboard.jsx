@@ -16,7 +16,14 @@
 
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  useMapEvents,
+  Circle,
+  useMap,
+} from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useAuth } from "../context/AuthContext";
@@ -33,6 +40,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { Button, Card, Input } from "../components/ui";
+import GeofenceMonitor from "../components/geo";
 
 // Fix Leaflet default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl;
@@ -229,12 +237,211 @@ const PhoneIcon = () => (
 );
 
 // ===== SOS PANEL COMPONENT =====
-const SOSPanel = ({ activeTrip }) => {
-  const handleSOS = () => {
-    // Implement SOS triggering logic here (backend call, etc.)
-    alert(
-      `SOS triggered for trip: ${activeTrip.tripName}! Alerts sent to emergency contacts.`
-    );
+const SOSPanel = ({ activeTrip, onLocationUpdate, emergencyContacts }) => {
+  const [location, setLocation] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+  const [sosLoading, setSosLoading] = useState(false);
+
+  // Send SOS alert to a single emergency contact
+  const sendSOSToContact = async (contact, lat, lon, locationName) => {
+    try {
+      // Format phone number - add +91 if doesn't start with +
+      const formattedPhone = contact.phone.startsWith('+') ? contact.phone : `+91${contact.phone.replace(/^0+/, '')}`;
+      
+      // Get Firebase auth token
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        console.error("No auth token available");
+        return { success: false, contact: contact.name, error: "No auth token" };
+      }
+      
+      const message = `🚨 SOS EMERGENCY ALERT! 🚨\n\n${activeTrip.tripName} needs help!\n\nExact Location:\nLatitude: ${lat}\nLongitude: ${lon}\n${locationName ? `Address: ${locationName}\n` : ''}\nGoogle Maps: https://www.google.com/maps?q=${lat},${lon}\n\nPlease respond immediately!`;
+
+      const response = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          to: formattedPhone,
+          message: message,
+        }),
+      });
+
+      const result = await response.json();
+      return { success: response.ok, contact: contact.name, result };
+    } catch (error) {
+      console.error(`Failed to send SOS to ${contact.name}:`, error);
+      return { success: false, contact: contact.name, error };
+    }
+  };
+
+  const handleSOS = async () => {
+    if (!emergencyContacts || emergencyContacts.length === 0) {
+      alert("⚠️ No emergency contacts found! Please add emergency contacts in your Profile to use SOS feature.");
+      return;
+    }
+
+    setSosLoading(true);
+
+    // Get current location
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      setSosLoading(false);
+      return;
+    }
+
+    // Try high accuracy first, fallback to lower accuracy if it fails
+    const getLocation = (highAccuracy, timeoutMs) => {
+      return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          { enableHighAccuracy: highAccuracy, timeout: timeoutMs, maximumAge: 60000 }
+        );
+      });
+    };
+
+    try {
+      let position;
+      try {
+        // First try high accuracy with 15 second timeout
+        position = await getLocation(true, 15000);
+      } catch (highAccuracyError) {
+        console.warn("High accuracy GPS failed, trying low accuracy:", highAccuracyError);
+        // Fallback to low accuracy with 10 second timeout
+        position = await getLocation(false, 10000);
+      }
+
+      const { latitude: lat, longitude: lon } = position.coords;
+
+      // Try to get readable location name
+      let locationName = "";
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`
+        );
+        const data = await res.json();
+        if (data && data.display_name) {
+          locationName = data.display_name;
+        }
+      } catch (error) {
+        console.error("Reverse geocode error:", error);
+      }
+
+      // Send SOS to all emergency contacts
+      const results = await Promise.all(
+        emergencyContacts.map((contact) =>
+          sendSOSToContact(contact, lat, lon, locationName)
+        )
+      );
+
+      const successCount = results.filter((r) => r.success).length;
+      const failedContacts = results
+        .filter((r) => !r.success)
+        .map((r) => r.contact);
+
+      if (successCount === emergencyContacts.length) {
+        alert(
+          `✅ SOS Alert sent successfully to all ${successCount} emergency contacts!\n\nYour location has been shared.`
+        );
+      } else if (successCount > 0) {
+        alert(
+          `⚠️ SOS Alert sent to ${successCount}/${emergencyContacts.length} contacts.\n\nFailed to reach: ${failedContacts.join(", ")}`
+        );
+      } else {
+        alert(
+          `❌ Failed to send SOS alerts. Please try again or call emergency services directly.`
+        );
+      }
+
+      // Vibrate for feedback
+      if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+    } catch (error) {
+      console.error("GPS Error:", error);
+      alert(
+        "Failed to get your location. Please check:\n\n1. Location/GPS is enabled\n2. Browser has permission to access location\n3. You're not in airplane mode\n\nError: " +
+          error.message
+      );
+    } finally {
+      setSosLoading(false);
+    }
+  };
+
+  const handleUpdateLocation = async () => {
+    setLoadingLocation(true);
+
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      setLoadingLocation(false);
+      return;
+    }
+
+    // Helper function to get location with specified accuracy
+    const getLocation = (highAccuracy, timeoutMs) => {
+      return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          { enableHighAccuracy: highAccuracy, timeout: timeoutMs, maximumAge: 60000 }
+        );
+      });
+    };
+
+    try {
+      let position;
+      try {
+        // First try high accuracy with 15 second timeout
+        position = await getLocation(true, 15000);
+      } catch (highAccuracyError) {
+        console.warn("High accuracy GPS failed, trying low accuracy:", highAccuracyError);
+        // Fallback to low accuracy with 10 second timeout
+        position = await getLocation(false, 10000);
+      }
+
+      const { latitude: lat, longitude: lon } = position.coords;
+
+      // 1. Immediately update parent (critical for geofencing)
+      if (onLocationUpdate) {
+        onLocationUpdate({ lat, lon });
+      }
+      setLastUpdated(new Date().toLocaleTimeString());
+
+      // 2. Reverse Geocode for display (using OpenStreetMap Nominatim)
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`
+        );
+        const data = await res.json();
+
+        if (data && data.display_name) {
+          // Simplfy address: City, State, Country if possible, else full name
+          const addr = data.address || {};
+          const city =
+            addr.city || addr.town || addr.village || addr.suburb || "";
+          const state = addr.state || "";
+          const country = addr.country || "";
+          const shortLoc = [city, state, country].filter(Boolean).join(", ");
+
+          setLocation(shortLoc || "Current Location (GPS)");
+        } else {
+          setLocation(`${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+        }
+      } catch (error) {
+        console.error("Reverse geocode error:", error);
+        setLocation(`${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+      }
+    } catch (error) {
+      console.error("GPS Error:", error);
+      alert(
+        "Failed to get location. Please check:\\n\\n1. Location/GPS is enabled\\n2. Browser has permission\\n3. You're not in airplane mode\\n\\nError: " +
+          error.message
+      );
+    } finally {
+      setLoadingLocation(false);
+    }
   };
 
   return (
@@ -252,6 +459,44 @@ const SOSPanel = ({ activeTrip }) => {
             You are currently monitored. In case of emergency, use the SOS
             button below.
           </p>
+
+          {/* Location Tracking Section */}
+          <div className="mb-4 bg-white/60 rounded-lg p-3 border border-red-100">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-red-800 uppercase tracking-wider">
+                Current Location
+              </span>
+              {lastUpdated && (
+                <span className="text-[10px] text-red-600">
+                  Updated: {lastUpdated}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1">
+                {location ? (
+                  <p className="text-sm font-semibold text-red-900 flex items-center gap-1">
+                    <MapPinIcon className="w-4 h-4" />
+                    {location}
+                  </p>
+                ) : (
+                  <p className="text-sm text-red-400 italic">
+                    Location not updated yet
+                  </p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleUpdateLocation}
+                loading={loadingLocation}
+                className="text-red-700 hover:bg-red-100 hover:text-red-900 border-red-200"
+              >
+                Update Location
+              </Button>
+            </div>
+          </div>
 
           {/* Emergency Numbers */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -290,10 +535,17 @@ const SOSPanel = ({ activeTrip }) => {
         <div>
           <button
             onClick={handleSOS}
-            className="w-24 h-24 rounded-full bg-red-600 shadow-lg shadow-red-600/30 flex flex-col items-center justify-center text-white hover:bg-red-700 active:scale-95 transition-all border-4 border-red-100 animate-pulse"
+            disabled={sosLoading}
+            className={`w-24 h-24 rounded-full bg-red-600 shadow-lg shadow-red-600/30 flex flex-col items-center justify-center text-white hover:bg-red-700 active:scale-95 transition-all border-4 border-red-100 ${sosLoading ? '' : 'animate-pulse'} disabled:opacity-70 disabled:cursor-not-allowed`}
           >
-            <span className="text-2xl font-black tracking-widest">SOS</span>
-            <span className="text-[10px] font-bold mt-1 opacity-90">HELP</span>
+            {sosLoading ? (
+              <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <>
+                <span className="text-2xl font-black tracking-widest">SOS</span>
+                <span className="text-[10px] font-bold mt-1 opacity-90">HELP</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -769,7 +1021,7 @@ const TripModal = ({ isOpen, onClose, onSave, initialData = null }) => {
 };
 
 // ===== TRIP CARD COMPONENT =====
-const TripCard = ({ trip, onDelete, onEdit, onStart }) => {
+const TripCard = ({ trip, onDelete, onEdit, onStart, onViewMap }) => {
   // Status check:
   // If status is 'active', check if expired based on endTimestamp
   // If status is 'created', it's waiting to start
@@ -907,36 +1159,171 @@ const TripCard = ({ trip, onDelete, onEdit, onStart }) => {
             Start Journey
           </Button>
         ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onEdit(trip)}
-            className="flex-1 text-global-indigo hover:bg-global-indigo/10"
-            disabled={status === "completed"} // Disable edit if completed
-          >
-            <EditIcon className="w-4 h-4 mr-1" />
-            Edit
-          </Button>
+          <div className="flex gap-2 flex-1">
+            {status === "active" && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onViewMap(trip)}
+                className="flex-1"
+              >
+                <MapPinIcon className="w-4 h-4 mr-1" />
+                View Live Map
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(trip)}
+              className="flex-1 text-global-indigo hover:bg-global-indigo/10"
+              disabled={status === "completed"} // Disable edit if completed
+            >
+              <EditIcon className="w-4 h-4 mr-1" />
+              Edit
+            </Button>
+          </div>
         )}
 
         <Button
           variant="ghost"
           size="sm"
           onClick={() => onDelete(trip.id)}
-          className="flex-1 text-global-error hover:bg-global-error/10"
+          className="text-global-error hover:bg-global-error/10 px-3"
         >
-          <TrashIcon className="w-4 h-4 mr-1" />
-          Delete
+          <TrashIcon className="w-4 h-4" />
         </Button>
       </div>
     </Card>
   );
 };
 
+// Helper to auto-zoom map to fit markers
+const FitBounds = ({ markers }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (markers.length > 0) {
+      const bounds = L.latLngBounds(markers);
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [markers, map]);
+  return null;
+};
+
+// ===== LIVE TRACKING MODAL =====
+const LiveTrackingModal = ({
+  isOpen,
+  onClose,
+  trip,
+  currentLocation,
+  geofenceCenter,
+  showGeofence,
+  onToggleGeofence,
+}) => {
+  if (!isOpen || !trip) return null;
+
+  // Use current location for map center, fallback to geofence center, or default
+  const mapCenterCoords = currentLocation
+    ? [currentLocation.lat, currentLocation.lon]
+    : geofenceCenter
+    ? [geofenceCenter.lat, geofenceCenter.lon]
+    : [51.505, -0.09];
+
+  // Calculate bounds points
+  const markersForBounds = [];
+  if (currentLocation)
+    markersForBounds.push([currentLocation.lat, currentLocation.lon]);
+  if (geofenceCenter)
+    markersForBounds.push([geofenceCenter.lat, geofenceCenter.lon]);
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-white z-10">
+          <div>
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+              Live Journey: {trip.tripName}
+            </h2>
+            <p className="text-sm text-gray-500">
+              {currentLocation ? "Tracking Active" : "Waiting for location..."}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showGeofence}
+                onChange={(e) => onToggleGeofence(e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded"
+              />
+              Show Safe Zone
+            </label>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* Map */}
+        <div className="flex-1 relative">
+          {currentLocation || geofenceCenter ? (
+            <MapContainer
+              center={mapCenterCoords}
+              zoom={10}
+              style={{ height: "100%", width: "100%" }}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution="&copy; OpenStreetMap contributors"
+              />
+
+              <FitBounds markers={markersForBounds} />
+
+              {/* Current Location Marker */}
+              {currentLocation && (
+                <Marker position={[currentLocation.lat, currentLocation.lon]} />
+              )}
+
+              {/* Geofence Circle (50km = 50000m) - Fixed at Home/SOS location */}
+              {showGeofence && geofenceCenter && (
+                <Circle
+                  center={[geofenceCenter.lat, geofenceCenter.lon]}
+                  radius={50000}
+                  pathOptions={{
+                    color: "green",
+                    fillColor: "green",
+                    fillOpacity: 0.1,
+                  }}
+                />
+              )}
+            </MapContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center bg-gray-50 text-gray-400">
+              <div className="text-center">
+                <MapPinIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>Waiting for GPS signal...</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Helper for Circle since we didn't import it explicitly at top yet
+// I will just use L.Circle if I can, or better, add Circle to imports.
+// For now, I'll use a placeholder name and fix imports in a separate call.
+// Actually, I can replace imports now in a separate tool call.
+
 // ===== MAIN DASHBOARD COMPONENT =====
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, userProfile, logout } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingTrip, setEditingTrip] = useState(null);
   const [trips, setTrips] = useState([]);
@@ -1012,14 +1399,11 @@ const Dashboard = () => {
       // 1. Call ID Generation Backend
       let backendId = null;
       try {
-        const idRes = await fetch(
-          "https://commitchaosbackend.onrender.com/generate-id",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ expiry: endTimestamp }),
-          }
-        );
+        const idRes = await fetch("/api/generate-id", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expiry: endTimestamp }),
+        });
         const idData = await idRes.json();
         if (idData && idData.id) {
           // Assuming response structure { id: "..." }
@@ -1051,6 +1435,7 @@ const Dashboard = () => {
 
   // Save new or update existing trip
   const handleSaveTrip = async (tripData) => {
+    console.log("Attempting to save trip:", tripData);
     if (editingTrip) {
       // UPDATE Existing Trip
       try {
@@ -1061,31 +1446,46 @@ const Dashboard = () => {
         setTrips((prev) =>
           prev.map((t) => (t.id === editingTrip.id ? { ...t, ...tripData } : t))
         );
+        console.log("Trip updated successfully");
       } catch (err) {
         console.error("Error updating trip:", err);
         throw err; // Re-throw to be caught in Modal
       }
     } else {
       // CREATE New Trip
-      // Ensure createdAt is present
-      const newTripData = {
-        ...tripData,
-        userId: user.uid,
-        userEmail: user.email,
-        createdAt: new Date().toISOString(),
-        status: "created", // Explicitly set status
-      };
+      try {
+        if (!user || !user.uid) {
+          throw new Error("User not authenticated, cannot save trip.");
+        }
 
-      const docRef = await addDoc(collection(db, "trips"), newTripData);
+        // Ensure createdAt is present
+        const newTripData = {
+          ...tripData,
+          userId: user.uid,
+          userEmail: user.email,
+          createdAt: new Date().toISOString(),
+          status: "created", // Explicitly set status
+          // Ensure no undefined values
+          endDateTime: tripData.endDateTime || "",
+          coPassengers: tripData.coPassengers || [],
+        };
 
-      // Update local state
-      setTrips((prev) => [
-        {
-          id: docRef.id,
-          ...newTripData,
-        },
-        ...prev,
-      ]);
+        console.log("Adding doc to Firestore:", newTripData);
+        const docRef = await addDoc(collection(db, "trips"), newTripData);
+        console.log("Trip saved with ID:", docRef.id);
+
+        // Update local state
+        setTrips((prev) => [
+          {
+            id: docRef.id,
+            ...newTripData,
+          },
+          ...prev,
+        ]);
+      } catch (err) {
+        console.error("Error saving new trip:", err);
+        alert("Failed to save trip: " + err.message);
+      }
     }
   };
 
@@ -1106,6 +1506,19 @@ const Dashboard = () => {
     (t) => t.status === "active" && new Date(t.endTimestamp) > new Date()
   );
 
+  // State for Geofencing Center (fetched via SOS Panel)
+  const [localityCenter, setLocalityCenter] = useState(null);
+
+  // Live Map State
+  const [showLiveModal, setShowLiveModal] = useState(false);
+  const [trackingTrip, setTrackingTrip] = useState(null);
+  const [showGeofence, setShowGeofence] = useState(true);
+
+  const handleViewMap = (trip) => {
+    setTrackingTrip(trip);
+    setShowLiveModal(true);
+  };
+
   return (
     <div className="min-h-screen bg-global-bg">
       {/* Navbar */}
@@ -1114,7 +1527,25 @@ const Dashboard = () => {
       {/* Main Content */}
       <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* SOS Panel for Active Trips */}
-        {activeTrip && <SOSPanel activeTrip={activeTrip} />}
+        {activeTrip && (
+          <>
+            <SOSPanel
+              activeTrip={activeTrip}
+              onLocationUpdate={(coords) => setLocalityCenter(coords)}
+              emergencyContacts={userProfile?.emergencyContacts || []}
+            />
+            {/* Geofence Monitor - Uses trip's destination coordinates as safe zone center */}
+            {activeTrip.latitude && activeTrip.longitude && (
+              <div className="mb-6">
+                <GeofenceMonitor
+                  center={{ lat: activeTrip.latitude, lon: activeTrip.longitude }}
+                  phoneNumber={activeTrip.phoneNumber} // Send SMS to trip registered phone
+                  tripId={activeTrip.id}
+                />
+              </div>
+            )}
+          </>
+        )}
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
@@ -1179,18 +1610,28 @@ const Dashboard = () => {
                 onDelete={handleDeleteTrip}
                 onEdit={handleEditClick}
                 onStart={handleStartTrip}
+                onViewMap={handleViewMap}
               />
             ))}
           </div>
         )}
       </main>
 
-      {/* Create/Edit Trip Modal */}
       <TripModal
         isOpen={showModal}
         onClose={handleCloseModal}
         onSave={handleSaveTrip}
         initialData={editingTrip}
+      />
+
+      {/* Live Tracking Modal */}
+      <LiveTrackingModal
+        isOpen={showLiveModal}
+        onClose={() => setShowLiveModal(false)}
+        trip={trackingTrip}
+        currentLocation={localityCenter}
+        showGeofence={showGeofence}
+        onToggleGeofence={setShowGeofence}
       />
     </div>
   );
