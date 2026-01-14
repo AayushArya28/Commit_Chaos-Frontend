@@ -333,13 +333,20 @@ const CameraCapture = ({
     const [cameraReady, setCameraReady] = useState(false);
     const [cameraError, setCameraError] = useState(null);
     const [faceDetected, setFaceDetected] = useState(false);
+    const [retryCount, setRetryCount] = useState(0);
 
-    // Initialize camera
+    // Initialize camera with retry logic
     useEffect(() => {
         let stream = null;
+        let retryTimeout = null;
 
-        const startCamera = async () => {
+        const startCamera = async (attempt = 1) => {
             try {
+                // First, stop any existing streams
+                if (stream) {
+                    stream.getTracks().forEach((track) => track.stop());
+                }
+
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         width: { ideal: 640 },
@@ -351,14 +358,30 @@ const CameraCapture = ({
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
                     setCameraReady(true);
+                    setCameraError(null);
                 }
             } catch (err) {
                 console.error("Camera error:", err);
-                setCameraError(
-                    err.name === "NotAllowedError"
-                        ? "Camera access denied. Please enable camera permissions."
-                        : "Could not access camera. Please check your device."
-                );
+                
+                // Handle specific error types
+                if (err.name === "NotAllowedError") {
+                    setCameraError("Camera access denied. Please enable camera permissions in your browser settings.");
+                } else if (err.name === "AbortError" || err.message?.includes("Timeout")) {
+                    // Retry on timeout errors (up to 3 attempts)
+                    if (attempt < 3) {
+                        console.log(`Camera timeout, retrying... (attempt ${attempt + 1})`);
+                        setRetryCount(attempt);
+                        retryTimeout = setTimeout(() => startCamera(attempt + 1), 1000);
+                    } else {
+                        setCameraError("Camera took too long to start. Please close other apps using the camera and try again.");
+                    }
+                } else if (err.name === "NotFoundError") {
+                    setCameraError("No camera found. Please connect a camera and try again.");
+                } else if (err.name === "NotReadableError") {
+                    setCameraError("Camera is in use by another application. Please close it and try again.");
+                } else {
+                    setCameraError("Could not access camera. Please check your device and try again.");
+                }
             }
         };
 
@@ -367,6 +390,9 @@ const CameraCapture = ({
         }
 
         return () => {
+            if (retryTimeout) {
+                clearTimeout(retryTimeout);
+            }
             if (stream) {
                 stream.getTracks().forEach((track) => track.stop());
             }
