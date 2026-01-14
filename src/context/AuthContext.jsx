@@ -261,6 +261,42 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Check KYC status from backend
+  const checkKycStatus = async () => {
+    if (!user) return { success: false, verified: false, error: 'No user logged in' };
+    
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/kyc-status', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const isVerified = data.kyc === true;
+      
+      // Update local state and localStorage for consistency
+      if (isVerified) {
+        localStorage.setItem(`kyc_${user.uid}`, 'verified');
+        setKycVerified(true);
+      }
+      
+      return { success: true, verified: isVerified };
+    } catch (error) {
+      console.error('Error checking KYC status from backend:', error);
+      // Fallback to localStorage if backend fails
+      const localStatus = localStorage.getItem(`kyc_${user.uid}`) === 'verified';
+      return { success: false, verified: localStatus, error: error.message };
+    }
+  };
+
   // Complete KYC verification
   const completeKyc = () => {
     if (user) {
@@ -352,6 +388,7 @@ export const AuthProvider = ({ children }) => {
     resendVerificationEmail,
     completeKyc,
     resetKyc,
+    checkKycStatus,
     updateUserProfile,
     fetchUserProfile,
   };
