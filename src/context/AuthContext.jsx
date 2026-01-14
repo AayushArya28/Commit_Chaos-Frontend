@@ -19,6 +19,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   sendEmailVerification,
   onAuthStateChanged,
@@ -27,6 +29,11 @@ import {
   setDoc,
   updateDoc
 } from '../../firebase';
+
+// Detect if user is on mobile device
+const isMobileDevice = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+};
 
 // Create Auth Context
 const AuthContext = createContext(null);
@@ -89,6 +96,47 @@ export const AuthProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
+  // Handle redirect result for mobile Google login
+  useEffect(() => {
+    const handleRedirectResult = async () => {
+      try {
+        console.log('Checking for redirect result...');
+        const result = await getRedirectResult(auth);
+        console.log('Redirect result:', result);
+        
+        if (result && result.user) {
+          console.log('Redirect login successful:', result.user.email);
+          // Create/update user profile in Firestore
+          const userDocRef = doc(db, 'users', result.user.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (!userDoc.exists()) {
+            await setDoc(userDocRef, {
+              email: result.user.email,
+              phone: '',
+              displayName: result.user.displayName || '',
+              photoURL: result.user.photoURL || '',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
+          await fetchUserProfile(result.user.uid);
+          
+          // Store a flag to indicate successful redirect login
+          sessionStorage.setItem('googleRedirectSuccess', 'true');
+        }
+      } catch (error) {
+        console.error('Redirect result error:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        // Store the error to display on login page
+        sessionStorage.setItem('googleRedirectError', getErrorMessage(error.code));
+      }
+    };
+
+    handleRedirectResult();
+  }, []);
+
   // Sign up with email and password
   const signup = async (email, password) => {
     try {
@@ -144,26 +192,47 @@ export const AuthProvider = ({ children }) => {
   // Login with Google
   const loginWithGoogle = async () => {
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      
-      // Create/update user profile in Firestore
-      const userDocRef = doc(db, 'users', result.user.uid);
-      const userDoc = await getDoc(userDocRef);
-      
-      if (!userDoc.exists()) {
-        await setDoc(userDocRef, {
-          email: result.user.email,
-          phone: '',
-          displayName: result.user.displayName || '',
-          photoURL: result.user.photoURL || '',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
+      // Use redirect on mobile devices, popup on desktop
+      if (isMobileDevice()) {
+        // On mobile, use redirect flow
+        await signInWithRedirect(auth, googleProvider);
+        // This will redirect the user, so no return here
+        // The result will be handled in the useEffect with getRedirectResult
+        return { success: true, redirect: true };
+      } else {
+        // On desktop, use popup flow
+        const result = await signInWithPopup(auth, googleProvider);
+        
+        // Create/update user profile in Firestore
+        const userDocRef = doc(db, 'users', result.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists()) {
+          await setDoc(userDocRef, {
+            email: result.user.email,
+            phone: '',
+            displayName: result.user.displayName || '',
+            photoURL: result.user.photoURL || '',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        await fetchUserProfile(result.user.uid);
+        
+        return { success: true, user: result.user };
       }
-      await fetchUserProfile(result.user.uid);
-      
-      return { success: true, user: result.user };
     } catch (error) {
+      console.error('Google login error:', error);
+      // Handle specific error cases
+      if (error.code === 'auth/popup-blocked') {
+        // Try redirect as fallback
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true, redirect: true };
+        } catch (redirectError) {
+          return { success: false, error: getErrorMessage(redirectError.code) };
+        }
+      }
       return { success: false, error: getErrorMessage(error.code) };
     }
   };
@@ -244,10 +313,11 @@ export const AuthProvider = ({ children }) => {
 
   // Helper function to get user-friendly error messages
   const getErrorMessage = (errorCode) => {
+    console.log('Auth error code:', errorCode); // Debug log
     const errorMessages = {
       'auth/email-already-in-use': 'This email is already registered. Please login instead.',
       'auth/invalid-email': 'Please enter a valid email address.',
-      'auth/operation-not-allowed': 'This operation is not allowed. Please contact support.',
+      'auth/operation-not-allowed': 'Email/Password sign-in is not enabled in Firebase Console.',
       'auth/weak-password': 'Password should be at least 6 characters long.',
       'auth/user-disabled': 'This account has been disabled. Please contact support.',
       'auth/user-not-found': 'No account found with this email. Please sign up.',
@@ -256,8 +326,18 @@ export const AuthProvider = ({ children }) => {
       'auth/too-many-requests': 'Too many attempts. Please try again later.',
       'auth/popup-closed-by-user': 'Sign-in popup was closed. Please try again.',
       'auth/network-request-failed': 'Network error. Please check your connection.',
+      'auth/popup-blocked': 'Popup was blocked. Please allow popups and try again.',
+      'auth/cancelled-popup-request': 'Sign-in was cancelled. Please try again.',
+      'auth/unauthorized-domain': 'This domain is not authorized for OAuth. Please contact support.',
+      'auth/internal-error': 'An internal error occurred. Please try again.',
+      'auth/web-storage-unsupported': 'Web storage is not supported. Please enable cookies.',
+      'auth/redirect-cancelled-by-user': 'Sign-in was cancelled. Please try again.',
+      'auth/redirect-operation-pending': 'A sign-in operation is already in progress.',
+      'auth/user-token-expired': 'Your session has expired. Please sign in again.',
+      'auth/invalid-api-key': 'Invalid API key. Please contact support.',
+      'auth/app-not-authorized': 'This app is not authorized. Please contact support.',
     };
-    return errorMessages[errorCode] || 'An unexpected error occurred. Please try again.';
+    return errorMessages[errorCode] || `Authentication error: ${errorCode || 'Unknown error'}. Please try again.`;
   };
 
   const value = {

@@ -11,7 +11,7 @@
  * - On success → redirect to KYC page
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button, Input, Card } from '../components/ui';
@@ -35,7 +35,7 @@ const GoogleIcon = () => (
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login, loginWithGoogle, kycVerified } = useAuth();
+  const { login, loginWithGoogle, kycVerified, currentUser } = useAuth();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -49,6 +49,28 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
+
+  // Check for redirect result on mount
+  useEffect(() => {
+    // Check for redirect error
+    const redirectError = sessionStorage.getItem('googleRedirectError');
+    if (redirectError) {
+      setErrors({ submit: redirectError });
+      sessionStorage.removeItem('googleRedirectError');
+    }
+    
+    // Check for successful redirect login
+    const redirectSuccess = sessionStorage.getItem('googleRedirectSuccess');
+    if (redirectSuccess && currentUser) {
+      sessionStorage.removeItem('googleRedirectSuccess');
+      const kycStatus = localStorage.getItem(`kyc_${currentUser.uid}`);
+      if (kycStatus === 'verified') {
+        navigate('/dashboard');
+      } else {
+        navigate('/kyc');
+      }
+    }
+  }, [currentUser, navigate]);
 
   // Handle input change
   const handleChange = (e) => {
@@ -129,6 +151,13 @@ const Login = () => {
     const result = await loginWithGoogle();
 
     if (result.success) {
+      // If redirect flow (mobile), the page will reload
+      // The redirect result is handled in AuthContext
+      if (result.redirect) {
+        // Keep loading state as page will redirect
+        return;
+      }
+      
       // Check KYC status
       const kycStatus = localStorage.getItem(`kyc_${result.user.uid}`);
       if (kycStatus === 'verified') {

@@ -13,7 +13,7 @@
  * - After signup: Show "Verify your email to continue" screen
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button, Input, Card } from '../components/ui';
@@ -86,7 +86,7 @@ const EmailVerificationScreen = ({ email, onResend, resending }) => (
 
 const Signup = () => {
   const navigate = useNavigate();
-  const { signup, loginWithGoogle } = useAuth();
+  const { signup, loginWithGoogle, currentUser } = useAuth();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -102,6 +102,28 @@ const Signup = () => {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
   const [resending, setResending] = useState(false);
+
+  // Check for redirect result on mount
+  useEffect(() => {
+    // Check for redirect error
+    const redirectError = sessionStorage.getItem('googleRedirectError');
+    if (redirectError) {
+      setErrors({ submit: redirectError });
+      sessionStorage.removeItem('googleRedirectError');
+    }
+    
+    // Check for successful redirect login
+    const redirectSuccess = sessionStorage.getItem('googleRedirectSuccess');
+    if (redirectSuccess && currentUser) {
+      sessionStorage.removeItem('googleRedirectSuccess');
+      const kycStatus = localStorage.getItem(`kyc_${currentUser.uid}`);
+      if (kycStatus === 'verified') {
+        navigate('/dashboard');
+      } else {
+        navigate('/kyc');
+      }
+    }
+  }, [currentUser, navigate]);
 
   // Handle input change
   const handleChange = (e) => {
@@ -181,6 +203,13 @@ const Signup = () => {
     const result = await loginWithGoogle();
 
     if (result.success) {
+      // If redirect flow (mobile), the page will reload
+      // The redirect result is handled in AuthContext
+      if (result.redirect) {
+        // Keep loading state as page will redirect
+        return;
+      }
+      
       // Google accounts are pre-verified, go directly to KYC
       navigate('/kyc');
     } else {

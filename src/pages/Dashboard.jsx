@@ -144,6 +144,14 @@ const Navbar = ({ user, onLogout }) => {
                     {user?.email}
                   </p>
                 </div>
+                <Link
+                  to="/profile"
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-global-text hover:bg-global-bg transition-colors"
+                  onClick={() => setShowDropdown(false)}
+                >
+                  <UserIcon />
+                  My Profile
+                </Link>
                 <button
                   onClick={onLogout}
                   className="w-full flex items-center gap-2 px-4 py-2 text-sm text-global-error hover:bg-global-error/5 transition-colors"
