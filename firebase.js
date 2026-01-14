@@ -6,6 +6,7 @@
  * 
  * This file initializes Firebase services:
  * - Authentication (Email/Password + Google OAuth)
+ * - Firestore for user profile data
  * - Analytics for tracking
  */
 
@@ -21,6 +22,13 @@ import {
   sendEmailVerification,
   onAuthStateChanged
 } from "firebase/auth";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc
+} from "firebase/firestore";
 
 // Firebase project configuration
 const firebaseConfig = {
@@ -37,6 +45,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const auth = getAuth(app);
+const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Export Firebase services for use throughout the app
@@ -44,11 +53,16 @@ export {
   app,
   analytics,
   auth,
+  db,
   googleProvider,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   sendEmailVerification,
-  onAuthStateChanged
+  onAuthStateChanged,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc
 };

@@ -25,7 +25,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
-import { Landing, Login, Signup, KYC, Dashboard } from './pages';
+import { Landing, Login, Signup, KYC, Dashboard, Profile } from './pages';
 
 const App = () => {
   return (
@@ -73,6 +73,16 @@ const App = () => {
             element={
               <ProtectedRoute requireKyc>
                 <Dashboard />
+              </ProtectedRoute>
+            } 
+          />
+
+          {/* Profile - Requires authentication + KYC */}
+          <Route 
+            path="/profile" 
+            element={
+              <ProtectedRoute requireKyc>
+                <Profile />
               </ProtectedRoute>
             } 
           />

@@ -14,13 +14,18 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
   auth, 
+  db,
   googleProvider,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   sendEmailVerification,
-  onAuthStateChanged
+  onAuthStateChanged,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc
 } from '../../firebase';
 
 // Create Auth Context
@@ -38,24 +43,47 @@ export const useAuth = () => {
 // Auth Provider Component
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [kycVerified, setKycVerified] = useState(false);
+
+  // Fetch user profile from Firestore
+  const fetchUserProfile = async (uid) => {
+    try {
+      const userDocRef = doc(db, 'users', uid);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        setUserProfile(userDoc.data());
+        return userDoc.data();
+      }
+      return null;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      return null;
+    }
+  };
 
   // Listen for auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
-      setLoading(false);
       
-      // Check KYC status from localStorage (mock persistence)
       if (user) {
+        // Fetch user profile from Firestore
+        await fetchUserProfile(user.uid);
+        
+        // Check KYC status from localStorage (mock persistence)
         const kycStatus = localStorage.getItem(`kyc_${user.uid}`);
         setKycVerified(kycStatus === 'verified');
         
         // Get and log the user's ID token
         const token = await user.getIdToken();
         console.log("User ID Token:", token);
+      } else {
+        setUserProfile(null);
       }
+      
+      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -74,7 +102,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Login with email and password
-  const login = async (email, password) => {
+  const login = async (email, password, phone = null) => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
@@ -87,6 +115,26 @@ export const AuthProvider = ({ children }) => {
         };
       }
       
+      // Update phone number in profile if provided
+      if (phone) {
+        const userDocRef = doc(db, 'users', userCredential.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (userDoc.exists()) {
+          await updateDoc(userDocRef, { phone });
+        } else {
+          await setDoc(userDocRef, {
+            email: userCredential.user.email,
+            phone,
+            displayName: userCredential.user.displayName || '',
+            photoURL: '',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        await fetchUserProfile(userCredential.user.uid);
+      }
+      
       return { success: true, user: userCredential.user };
     } catch (error) {
       return { success: false, error: getErrorMessage(error.code) };
@@ -97,6 +145,23 @@ export const AuthProvider = ({ children }) => {
   const loginWithGoogle = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
+      
+      // Create/update user profile in Firestore
+      const userDocRef = doc(db, 'users', result.user.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      if (!userDoc.exists()) {
+        await setDoc(userDocRef, {
+          email: result.user.email,
+          phone: '',
+          displayName: result.user.displayName || '',
+          photoURL: result.user.photoURL || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      await fetchUserProfile(result.user.uid);
+      
       return { success: true, user: result.user };
     } catch (error) {
       return { success: false, error: getErrorMessage(error.code) };
@@ -143,6 +208,40 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Update user profile
+  const updateUserProfile = async (profileData) => {
+    if (!user) return { success: false, error: 'No user logged in' };
+    
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      const updateData = {
+        ...profileData,
+        updatedAt: new Date().toISOString()
+      };
+      
+      if (userDoc.exists()) {
+        await updateDoc(userDocRef, updateData);
+      } else {
+        await setDoc(userDocRef, {
+          email: user.email,
+          displayName: user.displayName || '',
+          phone: '',
+          photoURL: '',
+          createdAt: new Date().toISOString(),
+          ...updateData
+        });
+      }
+      
+      await fetchUserProfile(user.uid);
+      return { success: true };
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
   // Helper function to get user-friendly error messages
   const getErrorMessage = (errorCode) => {
     const errorMessages = {
@@ -163,6 +262,7 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    userProfile,
     loading,
     kycVerified,
     signup,
@@ -172,6 +272,8 @@ export const AuthProvider = ({ children }) => {
     resendVerificationEmail,
     completeKyc,
     resetKyc,
+    updateUserProfile,
+    fetchUserProfile,
   };
 
   return (
