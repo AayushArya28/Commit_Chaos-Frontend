@@ -248,6 +248,7 @@ const SOSPanel = ({ activeTrip, onLocationUpdate, emergencyContacts }) => {
     try {
       // Format phone number - add +91 if doesn't start with +
       const formattedPhone = contact.phone.startsWith('+') ? contact.phone : `+91${contact.phone.replace(/^0+/, '')}`;
+
       
       // Get Firebase auth token
       const token = await auth.currentUser?.getIdToken();
