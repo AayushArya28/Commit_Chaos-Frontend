@@ -47,6 +47,12 @@ const IdCardIcon = () => (
   </svg>
 );
 
+const UploadIcon = () => (
+  <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+  </svg>
+);
+
 // ===== VERIFICATION STEPS =====
 const STEPS = {
   INSTRUCTIONS: 'instructions',
@@ -107,8 +113,8 @@ const InstructionCard = ({ onStart }) => (
         </h3>
         <ul className="space-y-2">
           {[
-            'You have your government ID ready',
-            'Good lighting conditions',
+            'You have your government ID image ready to upload',
+            'Good lighting conditions for face capture',
             'Camera access is enabled',
             'Face is clearly visible (no masks, sunglasses)',
           ].map((item, index) => (
@@ -128,6 +134,116 @@ const InstructionCard = ({ onStart }) => (
     </Card>
   </div>
 );
+
+// ===== ID UPLOAD COMPONENT =====
+const IdUpload = ({ onUpload, uploadedImage, onRetake }) => {
+  const fileInputRef = useRef(null);
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleFile = (file) => {
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        onUpload(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFile(e.target.files[0]);
+    }
+  };
+
+  if (uploadedImage) {
+    return (
+      <div className="text-center">
+        <div className="relative inline-block rounded-xl overflow-hidden border-4 border-global-success mb-4">
+          <img 
+            src={uploadedImage} 
+            alt="Uploaded ID" 
+            className="w-full max-w-md"
+          />
+          <div className="absolute top-3 right-3 w-10 h-10 bg-global-success rounded-full flex items-center justify-center text-white">
+            <CheckIcon />
+          </div>
+        </div>
+        <p className="text-global-success font-medium mb-4">ID uploaded successfully!</p>
+        <Button variant="ghost" onClick={onRetake}>
+          Choose Different Image
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-center">
+      <h3 className="text-lg font-semibold text-global-text mb-2">Step 1: Upload Your ID</h3>
+      <p className="text-global-muted text-sm mb-6">Upload a clear image of your government ID</p>
+
+      {/* Upload area */}
+      <div
+        className={`relative border-2 border-dashed rounded-xl p-12 transition-colors cursor-pointer ${
+          dragActive 
+            ? 'border-global-indigo bg-global-indigo/5' 
+            : 'border-gray-300 hover:border-global-indigo hover:bg-global-indigo/5'
+        }`}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleChange}
+          className="hidden"
+        />
+        
+        <div className="text-global-indigo mb-4 flex justify-center">
+          <UploadIcon />
+        </div>
+        
+        <p className="text-global-text font-medium mb-2">
+          Drag & drop your ID image here
+        </p>
+        <p className="text-global-muted text-sm mb-4">
+          or click to browse files
+        </p>
+        
+        <Button variant="secondary" type="button">
+          Choose File
+        </Button>
+      </div>
+
+      <p className="text-global-muted text-xs mt-4">
+        Supported formats: JPG, PNG, JPEG • Max size: 10MB
+      </p>
+    </div>
+  );
+};
 
 // ===== CAMERA COMPONENT =====
 const CameraCapture = ({ 
@@ -316,7 +432,7 @@ const CameraCapture = ({
         variant="primary" 
         size="lg" 
         onClick={handleCapture}
-        disabled={!cameraReady || (!isIdCapture && !faceDetected)}
+        disabled={!cameraReady}
       >
         <CameraIcon className="w-5 h-5 mr-2" />
         Capture Photo
@@ -324,7 +440,7 @@ const CameraCapture = ({
 
       {!isIdCapture && !faceDetected && cameraReady && (
         <p className="text-yellow-600 text-sm mt-3">
-          Please position your face in the frame
+          Tip: Make sure your face is well-lit and centered in the frame
         </p>
       )}
     </div>
@@ -543,13 +659,10 @@ const KYC = () => {
       case STEPS.ID_CAPTURE:
         return (
           <Card className="max-w-2xl mx-auto">
-            <CameraCapture
-              title="Step 1: Capture Your ID"
-              description="Hold your government ID clearly visible in the frame"
-              onCapture={handleIdCapture}
-              capturedImage={idImage}
+            <IdUpload
+              onUpload={handleIdCapture}
+              uploadedImage={idImage}
               onRetake={() => setIdImage(null)}
-              isIdCapture={true}
             />
           </Card>
         );
