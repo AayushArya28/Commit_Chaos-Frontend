@@ -1236,7 +1236,7 @@ const LiveTrackingModal = ({
     markersForBounds.push([geofenceCenter.lat, geofenceCenter.lon]);
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center p-4 bg-black/50">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-white z-10">
