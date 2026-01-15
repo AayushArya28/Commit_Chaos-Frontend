@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { auth } from "../../firebase";
-import { GoogleMap, LoadScript, HeatmapLayer, Circle } from "@react-google-maps/api";
+import { GoogleMap, useJsApiLoader, HeatmapLayer, Circle } from "@react-google-maps/api";
 
 // Google Maps libraries needed for heatmap
 const GOOGLE_MAPS_LIBRARIES = ["visualization"];
@@ -15,12 +15,17 @@ const GeofenceMonitor = ({ center, phoneNumber, onLocationChange, showHeatmap = 
   const [anomalyAlert, setAnomalyAlert] = useState(null);
   const [locationHistory, setLocationHistory] = useState([]);
   const [heatmapData, setHeatmapData] = useState([]);
-  const [mapLoaded, setMapLoaded] = useState(false);
   const wasInside = useRef(true); // Track previous state to prevent spamming alerts
   
   // For anomaly detection - track previous position
   const prevPosition = useRef(null);
   const currentPosition = useRef(null);
+
+  // Load Google Maps API using hook (prevents re-loading on re-render)
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+    libraries: GOOGLE_MAPS_LIBRARIES,
+  });
 
   // Map container style
   const mapContainerStyle = {
@@ -31,16 +36,16 @@ const GeofenceMonitor = ({ center, phoneNumber, onLocationChange, showHeatmap = 
 
   // Update heatmap data when location history changes
   useEffect(() => {
-    if (mapLoaded && window.google && locationHistory.length > 0) {
+    if (isLoaded && window.google && locationHistory.length > 0) {
       const newHeatmapData = locationHistory.map(loc => 
         new window.google.maps.LatLng(loc.lat, loc.lon)
       );
       setHeatmapData(newHeatmapData);
     }
-  }, [locationHistory, mapLoaded]);
+  }, [locationHistory, isLoaded]);
 
-  const onMapLoad = useCallback(() => {
-    setMapLoaded(true);
+  const onMapLoad = useCallback((map) => {
+    console.log("Google Map loaded successfully");
   }, []);
 
   // Helper: Haversine Formula (Same as before)
@@ -352,7 +357,23 @@ const GeofenceMonitor = ({ center, phoneNumber, onLocationChange, showHeatmap = 
               {locationHistory.length} points tracked
             </span>
           </h3>
-          <LoadScript googleMapsApiKey={GOOGLE_MAPS_API_KEY} libraries={GOOGLE_MAPS_LIBRARIES}>
+          {loadError && (
+            <div className="p-4 text-red-600 text-sm">
+              Error loading maps. Please check your API key.
+            </div>
+          )}
+          {!isLoaded && !loadError && (
+            <div className="h-75 flex items-center justify-center bg-gray-100">
+              <div className="text-gray-500 flex items-center gap-2">
+                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                </svg>
+                Loading map...
+              </div>
+            </div>
+          )}
+          {isLoaded && (
             <GoogleMap
               mapContainerStyle={mapContainerStyle}
               center={{ lat: center.lat, lng: center.lon }}
@@ -400,7 +421,7 @@ const GeofenceMonitor = ({ center, phoneNumber, onLocationChange, showHeatmap = 
                 />
               )}
             </GoogleMap>
-          </LoadScript>
+          )}
         </div>
       )}
 

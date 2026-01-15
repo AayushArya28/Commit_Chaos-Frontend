@@ -63,12 +63,37 @@ const Login = () => {
     const redirectSuccess = sessionStorage.getItem('googleRedirectSuccess');
     if (redirectSuccess && currentUser) {
       sessionStorage.removeItem('googleRedirectSuccess');
-      const kycStatus = localStorage.getItem(`kyc_${currentUser.uid}`);
-      if (kycStatus === 'verified') {
-        navigate('/dashboard');
-      } else {
-        navigate('/kyc');
-      }
+      // Check KYC status from backend API
+      const checkRedirectKyc = async () => {
+        try {
+          const token = await currentUser.getIdToken();
+          const response = await fetch('/api/kyc-status', {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.kyc || data.verified || data.status === 'verified' || data.kycVerified) {
+              localStorage.setItem(`kyc_${currentUser.uid}`, 'verified');
+              navigate('/dashboard');
+              return;
+            }
+          }
+          navigate('/kyc');
+        } catch (error) {
+          console.error('Error checking KYC status on redirect:', error);
+          const kycStatus = localStorage.getItem(`kyc_${currentUser.uid}`);
+          if (kycStatus === 'verified') {
+            navigate('/dashboard');
+          } else {
+            navigate('/kyc');
+          }
+        }
+      };
+      checkRedirectKyc();
     }
   }, [currentUser, navigate]);
 
@@ -113,6 +138,37 @@ const Login = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // Check KYC status from backend API
+  const checkKycStatus = async (user) => {
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/api/kyc-status', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('KYC Status:', data);
+        
+        // Update localStorage with backend status
+        if (data.kyc || data.verified || data.status === 'verified' || data.kycVerified) {
+          localStorage.setItem(`kyc_${user.uid}`, 'verified');
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error checking KYC status:', error);
+      // Fallback to localStorage if API fails
+      const kycStatus = localStorage.getItem(`kyc_${user.uid}`);
+      return kycStatus === 'verified';
+    }
+  };
+
   // Handle form submit
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -126,9 +182,9 @@ const Login = () => {
     const result = await login(formData.email, formData.password, formData.phone);
 
     if (result.success) {
-      // Navigate based on KYC status
-      const kycStatus = localStorage.getItem(`kyc_${result.user.uid}`);
-      if (kycStatus === 'verified') {
+      // Check KYC status from backend API
+      const isKycVerified = await checkKycStatus(result.user);
+      if (isKycVerified) {
         navigate('/dashboard');
       } else {
         navigate('/kyc');
@@ -158,9 +214,9 @@ const Login = () => {
         return;
       }
       
-      // Check KYC status
-      const kycStatus = localStorage.getItem(`kyc_${result.user.uid}`);
-      if (kycStatus === 'verified') {
+      // Check KYC status from backend API
+      const isKycVerified = await checkKycStatus(result.user);
+      if (isKycVerified) {
         navigate('/dashboard');
       } else {
         navigate('/kyc');
